@@ -1,0 +1,222 @@
+// We do not want the warnings about the old deprecated and unsecure CRT functions since these examples can be compiled under *nix as well
+#ifdef _MSC_VER
+	#define _CRT_SECURE_NO_WARNINGS
+#endif
+
+// Include libraries
+#include <stdlib.h>
+#include <stdio.h>
+#include <winsock2.h>
+#include <windows.h>
+#include <ws2tcpip.h>
+#include "conio.h"
+#include "pcap.h"
+#include "protocol_headers.h"
+
+// Function declarations
+void packet_handler(unsigned char *param, const struct pcap_pkthdr *packet_header, const unsigned char *packet_data);
+pcap_dumper_t* file_dumper;
+int icmpBrojac = 0;
+const char* plejfer(char* poruka);
+
+// Plejfer matrica
+char kljuc[5][5] = { {'P', 'R', 'I', 'M', 'E'},
+					 {'N', 'A', 'B', 'C', 'D'},
+					 {'F', 'G', 'H', 'K', 'L'},
+					 {'O', 'Q', 'S', 'T', 'U'},
+					 {'V', 'W', 'X', 'Y', 'Z'} };
+
+int main()
+{
+	pcap_t* device_handle;
+	char error_buffer[PCAP_ERRBUF_SIZE];
+	
+	// TO DO: IZMENITI IME DATOTEKE
+	if ((device_handle = pcap_open_offline("packetsv12.pcap", error_buffer)) == NULL)
+	{
+		printf("\n Unable to open the file %s.\n", "example.pcap");
+		return -1;
+	}
+
+	file_dumper = pcap_dump_open(device_handle, "encrypackets.pcap");
+	if (file_dumper == NULL)
+	{
+		printf("\n Error opening output file\n");
+		return -1;
+	}
+	// TO DO: Napraviti i otvoriti datoteku za upis kriptovanih podataka
+
+	if(pcap_datalink(device_handle) != DLT_EN10MB)
+	{
+		printf("\nThis program works only on Ethernet networks.\n");
+		return -1;
+	}
+
+	pcap_loop(device_handle, 0, packet_handler, NULL);
+
+	printf("Broj ICMP paketa:%d\n", icmpBrojac);
+
+	pcap_close(device_handle);
+
+	printf("\nInput file successfully processed.\n");
+
+	getchar();
+
+	return 0;
+}
+
+void packet_handler(unsigned char* user, const struct pcap_pkthdr* packet_header, const unsigned char* packet_data)
+{
+	printf("Paket pristigao:%ld:%ld\n", packet_header->ts.tv_sec,packet_header->ts.tv_usec);
+	int velicinaPaketa = packet_header->len;
+
+	char kopija[1000];
+	memset(kopija, 0, velicinaPaketa * sizeof(char));
+
+	/* DATA LINK LAYER - Ethernet */
+	ethernet_header* eh = (ethernet_header*)packet_data;
+	memcpy(kopija, eh, sizeof(ethernet_header) * sizeof(char));
+
+	// ARP
+	if (ntohs(eh->type) == 0x806)
+	{
+		printf("Protokol: ARP");
+	}
+	else if (ntohs(eh->type) == 0x800) {
+		ip_header* ih = (ip_header*)((unsigned char*)eh + sizeof(ethernet_header));
+		memcpy(kopija + sizeof(ethernet_header), ih, (ih->header_length * 4) * sizeof(char));
+
+		printf("Logicka adresa primaoca: %d.%d.%d.%d\n", ih->dst_addr[0], ih->dst_addr[1], ih->dst_addr[2], ih->dst_addr[3]);
+		if (ih->next_protocol == 1) {
+			printf("Protokol:ICMP");
+			icmpBrojac++;
+		}
+		else if (ih->next_protocol == 6) {
+			tcp_header* th = (tcp_header*)((unsigned char*)ih + ih->header_length * 4);
+
+			printf("Protokol: TCP\n");
+			printf("Zaglavlje:");
+
+			for (int i = 0;i < th->header_length * 4; i++) {
+				printf("%.2x", th[i]);
+				if ((i + 1) % 16 == 0)
+					printf("\n");
+			}
+			printf("\n");
+
+			if (ntohs(th->src_port) == 80 || ntohs(th->dest_port) == 80) {
+				printf("HTTP sadrzaj: ");
+				char* app_data = (char*)((unsigned char*)th + th->header_length * 4);
+				for (int i = 0;i < 16;i++) {
+					printf("%c", app_data[i]);
+				}
+				printf("\n");
+			}
+
+		}
+		else if (ih->next_protocol == 17) {
+			printf("Protokol: UDP\n");
+			udp_header* uh = (udp_header*)((unsigned char*)ih + ih->header_length * 4);
+			memcpy(kopija + sizeof(ethernet_header) + ih->header_length * 4, uh, sizeof(udp_header));
+
+			char* app_data = (char*)((unsigned char*)uh + sizeof(udp_header));
+			int app_length = ntohs(uh->datagram_length) - sizeof(udp_header);
+
+			printf("Aplikativni deo:");
+			for (int i = 0; i < app_length; i++) {
+				printf("%c", app_data[i]);
+				if (i + 1 % 16 == 0)
+					printf("\n");
+			}
+			app_data[app_length] = '\0';
+
+			char cipher[200] = "\0";
+			strcpy(cipher, plejfer(app_data));
+			printf("Sifrovano: %s", cipher);
+
+			memcpy(kopija + sizeof(ethernet_header) + ih->header_length * 4 + sizeof(udp_header),cipher, app_length);
+
+			pcap_dump((unsigned char*)file_dumper, packet_header, (const unsigned char*)kopija);
+		}
+		printf("\n\n");
+
+	}
+
+}
+
+const char* plejfer(char* poruka) {
+	int x1 = -1, x2 = -1, y1 = -1, y2 = -1;
+
+	int duzinaPoruke = strlen(poruka);
+
+	char neutralniKarakter = 'T'; // Pozicija [3][3]
+	
+	char kriptovanaPoruka[200];
+
+	for (int i = 0;i < duzinaPoruke;i++) {
+		if (poruka[i] == 'J') {
+			poruka[i] = 'I';
+		}
+	}
+
+	for (int i = 0;i < duzinaPoruke;i += 2) {
+
+		for (int j = 0;j < 5;j++) {
+			for (int k = 0;k < 5;k++) {
+				if (kljuc[j][k] == poruka[i]) {
+					x1 = j;
+					y1 = k;
+				}if (kljuc[j][k] == poruka[i + 1]) {
+					x2 = j;
+					y2 = k;
+				}
+			}
+		}
+
+		if (i == duzinaPoruke-1) {
+			x2 = 3;
+			y2 = 3;
+		}
+
+		if (x1 == x2 && y1 == y2) {
+			kriptovanaPoruka[i] = poruka[i];
+			kriptovanaPoruka[i + 1] = 'X';
+		}
+		else {
+			if (x1 == x2) {
+				if (y1 == 4) {
+					kriptovanaPoruka[i] = kljuc[x1][0];
+				}
+				else {
+					kriptovanaPoruka[i] = kljuc[x1][y1 + 1];
+				}
+				if (y2 == 4) {
+					kriptovanaPoruka[i + 1] = kljuc[x2][0];
+				}
+				else {
+					kriptovanaPoruka[i + 1] = kljuc[x2][y2 + 1];
+				}
+			}
+			else if (y1 == y2) {
+				if (x1 == 4) {
+					kriptovanaPoruka[i] = kljuc[0][y1];
+				}
+				else {
+					kriptovanaPoruka[i] = kljuc[x1 + 1][y1];
+				}if (x2 == 4) {
+					kriptovanaPoruka[i + 1] = kljuc[0][y2];
+				}
+				else {
+					kriptovanaPoruka[i + 1] = kljuc[x2 + 1][y2];
+				}
+			}
+			else {
+				kriptovanaPoruka[i] = kljuc[x1][y2];
+				kriptovanaPoruka[i + 1] = kljuc[x2][y1];
+			}
+
+		}
+	}
+	kriptovanaPoruka[duzinaPoruke] = '\0';
+	return kriptovanaPoruka;
+}
